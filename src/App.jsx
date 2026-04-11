@@ -61,7 +61,7 @@ const DAYS = [
     day: "Saturday", round: 3, lockHour: 14,
     bets: [
       { id: "sat1", label: "Round 3 Low Score — Pick 5 Players", prize: "🧺 Does laundry", type: "pick5" },
-      { id: "sat2", label: "54-hole leader shoots 66 or better Saturday?", prize: "🍳 Makes Sunday dinner", type: "yesno" },
+      { id: "sat2", label: "54-hole leader shoots 68 or better Saturday?", prize: "🍳 Makes Sunday dinner", type: "yesno" },
     ],
   },
   {
@@ -135,17 +135,8 @@ export default function App() {
   // ── Firebase real-time listener ───────────────────────────────────────────
   useEffect(() => {
     const unsub = onSnapshot(STATE_DOC, snap => {
-      if (snap.exists()) {
-        const data = snap.data();
-        // If names are still the old default, force reset to correct state
-        if (!data.names || data.names.includes("Wife")) {
-          saveState(DEFAULT_STATE);
-        } else {
-          setState(data);
-        }
-      } else {
-        saveState(DEFAULT_STATE);
-      }
+      if (snap.exists()) setState(snap.data());
+      else saveState(DEFAULT_STATE);
     });
     return unsub;
   }, []);
