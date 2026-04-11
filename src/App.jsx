@@ -61,7 +61,7 @@ const DAYS = [
     day: "Saturday", round: 3, lockHour: 14,
     bets: [
       { id: "sat1", label: "Round 3 Low Score — Pick 5 Players", prize: "🧺 Does laundry", type: "pick5" },
-      { id: "sat2", label: "54-hole leader shoots 68 or better Saturday?", prize: "🍳 Makes Sunday dinner", type: "yesno" },
+      { id: "sat2", label: "54-hole leader shoots 66 or better Saturday?", prize: "🍳 Makes Sunday dinner", type: "yesno" },
     ],
   },
   {
@@ -100,9 +100,14 @@ function scorePick5(playerPicks, roundResults) {
 }
 
 const DEFAULT_STATE = {
-  names: DEFAULT_NAMES,
-  picks: { [DEFAULT_NAMES[0]]: {}, [DEFAULT_NAMES[1]]: {} },
-  results: {},
+  names: ["Fred", "Anna"],
+  picks: { Fred: {}, Anna: {} },
+  results: {
+    thu1: { winner: "Anna", roundResults: {} },
+    thu2: { winner: "Fred" },
+    fri1: { winner: "Anna", roundResults: {} },
+    fri2: { winner: "draw" },
+  },
 };
 
 export default function App() {
