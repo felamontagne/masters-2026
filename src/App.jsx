@@ -108,6 +108,16 @@ const DEFAULT_STATE = {
     fri1: { winner: "Anna", roundResults: {} },
     fri2: { winner: "draw" },
   },
+  picks: {
+    Fred: {
+      fri1: ["McIlroy", "Åberg", "Scheffler", "Gotterup", "Thomas"],
+      fri2: "No",
+    },
+    Anna: {
+      fri1: ["McIlroy", "Scheffler", "Rose", "Lowry", "Reed"],
+      fri2: "Yes",
+    },
+  },
 };
 
 export default function App() {
@@ -125,7 +135,17 @@ export default function App() {
   // ── Firebase real-time listener ───────────────────────────────────────────
   useEffect(() => {
     const unsub = onSnapshot(STATE_DOC, snap => {
-      if (snap.exists()) setState(snap.data());
+      if (snap.exists()) {
+        const data = snap.data();
+        // If names are still the old default, force reset to correct state
+        if (!data.names || data.names.includes("Wife")) {
+          saveState(DEFAULT_STATE);
+        } else {
+          setState(data);
+        }
+      } else {
+        saveState(DEFAULT_STATE);
+      }
     });
     return unsub;
   }, []);
