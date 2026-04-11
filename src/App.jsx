@@ -61,7 +61,7 @@ const DAYS = [
     day: "Saturday", round: 3, lockHour: 14,
     bets: [
       { id: "sat1", label: "Round 3 Low Score — Pick 5 Players", prize: "🧺 Does laundry", type: "pick5" },
-      { id: "sat2", label: "54-hole leader shoots 66 or better Saturday?", prize: "🍳 Makes Sunday dinner", type: "yesno" },
+      { id: "sat2", label: "54-hole leader shoots 68 or better Saturday?", prize: "🍳 Makes Sunday dinner", type: "yesno" },
     ],
   },
   {
