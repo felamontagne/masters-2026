@@ -1,4 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBgrOaxcAQDEZsklVtPVHzFZxkTK2SGfMI",
+  authDomain: "masters-2026-4828a.firebaseapp.com",
+  projectId: "masters-2026-4828a",
+  storageBucket: "masters-2026-4828a.firebasestorage.app",
+  messagingSenderId: "253698157120",
+  appId: "1:253698157120:web:a099653d1adad8c7170da5",
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const STATE_DOC = doc(db, "game", "state");
 
 const DEFAULT_NAMES = ["Fred", "Wife"];
 
@@ -12,16 +27,16 @@ const FULL_FIELD = [
   "Sahith Theegala","Si Woo Kim","Tom Kim","Jake Knapp","Seamus Power",
   "Thomas Detry","Lucas Glover","Cameron Young","Dustin Johnson","Matt Fitzpatrick",
   "Max Homa","Billy Horschel","Fred Couples","Bernhard Langer","Larry Mize",
-  "Jose Maria Olazabal","Vijay Singh","Mike Weir","Angel Cabrera","Trevor Immelman",
+  "Jose Maria Olazabal","Vijay Singh","Mike Weir","Trevor Immelman",
   "Zach Johnson","Charl Schwartzel","Bubba Watson","Danny Willett","Patrick Reed",
-  "Sergio Garcia","Adam Scott","Ian Poulter","Lee Westwood","Louis Oosthuizen",
+  "Sergio Garcia","Ian Poulter","Lee Westwood","Louis Oosthuizen",
   "Marc Leishman","Kevin Kisner","Christiaan Bezuidenhout","Taylor Pendrith","Nick Dunlap",
   "Neal Shipley","Austin Eckroat","Akshay Bhatia","Nicolai Højgaard","Robert MacIntyre",
-  "Brian Harman","Jason Day","Tyrrell Hatton","Séamus Power","Erik van Rooyen",
+  "Brian Harman","Tyrrell Hatton","Erik van Rooyen",
   "Mackenzie Hughes","Kevin Yu","JT Poston","Davis Thompson","Ben Griffin"
-].filter((v,i,a) => a.indexOf(v) === i);
+].filter((v, i, a) => a.indexOf(v) === i);
 
-const SCORE_TABLE = { 1: 5, 2: 3, 3: 2 }; // 4-10 = 1pt, else 0
+const SCORE_TABLE = { 1: 5, 2: 3, 3: 2 };
 function getPoints(position) {
   if (!position || position > 10) return 0;
   return SCORE_TABLE[position] || 1;
@@ -69,53 +84,73 @@ function getDayIndex() {
   return { 4: 0, 5: 1, 6: 2, 0: 3 }[dow] ?? 0;
 }
 function isMastersWeekend() {
-  const { dow } = getETInfo();
-  return [0, 4, 5, 6].includes(dow);
+  return [0, 4, 5, 6].includes(getETInfo().dow);
 }
 function isLocked(dIdx) {
-  if (!isMastersWeekend()) return false; // outside tournament week, nothing locked
+  if (!isMastersWeekend()) return false;
   const cur = getDayIndex();
   if (dIdx < cur) return true;
   if (dIdx > cur) return false;
-  const { hour } = getETInfo();
-  return hour >= DAYS[dIdx].lockHour;
+  return getETInfo().hour >= DAYS[dIdx].lockHour;
 }
 
-const SK = "masters_bets_2025_v2";
-function load() { try { return JSON.parse(localStorage.getItem(SK)) || {}; } catch { return {}; } }
-function save(s) { try { localStorage.setItem(SK, JSON.stringify(s)); } catch {} }
-
-// ── scoring helper ────────────────────────────────────────────────────────────
 function scorePick5(playerPicks, roundResults) {
-  // roundResults: { playerName: position (int) }
   if (!roundResults || !playerPicks?.length) return null;
   return playerPicks.reduce((sum, p) => sum + getPoints(roundResults[p] ?? 99), 0);
 }
 
+const DEFAULT_STATE = {
+  names: DEFAULT_NAMES,
+  picks: { [DEFAULT_NAMES[0]]: {}, [DEFAULT_NAMES[1]]: {} },
+  results: {},
+};
+
 export default function App() {
-  const stored = load();
-  const [names, setNames] = useState(stored.names || DEFAULT_NAMES);
-  const [picks, setPicks] = useState(stored.picks || { [names[0]]: {}, [names[1]]: {} });
-  const [results, setResults] = useState(stored.results || {}); // betId -> { winner: name|"draw"|null, roundResults: {player:pos} }
+  const [state, setState] = useState(DEFAULT_STATE);
   const [leaderboard, setLeaderboard] = useState(null);
   const [loadingLB, setLoadingLB] = useState(false);
   const [activeDay, setActiveDay] = useState(Math.max(getDayIndex(), 0));
   const [tab, setTab] = useState("bets");
   const [editNames, setEditNames] = useState(false);
   const [playerSearch, setPlayerSearch] = useState({});
+  const [syncing, setSyncing] = useState(false);
 
-  // persist
-  useEffect(() => { save({ names, picks, results }); }, [names, picks, results]);
+  const { names, picks, results } = state;
 
-  // sync picks keys if names change
+  // ── Firebase real-time listener ───────────────────────────────────────────
   useEffect(() => {
-    setPicks(prev => {
-      const next = {};
-      names.forEach(n => { next[n] = prev[n] || {}; });
-      return next;
+    const unsub = onSnapshot(STATE_DOC, snap => {
+      if (snap.exists()) setState(snap.data());
     });
+    return unsub;
+  }, []);
+
+  // ── Save to Firebase ──────────────────────────────────────────────────────
+  async function saveState(newState) {
+    setSyncing(true);
+    try {
+      await setDoc(STATE_DOC, newState);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  function updateState(patch) {
+    const newState = { ...state, ...patch };
+    setState(newState);
+    saveState(newState);
+  }
+
+  // ── Sync picks keys when names change ────────────────────────────────────
+  useEffect(() => {
+    const newPicks = {};
+    names.forEach(n => { newPicks[n] = picks[n] || {}; });
+    if (JSON.stringify(newPicks) !== JSON.stringify(picks)) {
+      updateState({ picks: newPicks });
+    }
   }, [names]);
 
+  // ── Leaderboard ───────────────────────────────────────────────────────────
   const fetchLB = useCallback(() => {
     setLoadingLB(true);
     fetch("https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard")
@@ -136,30 +171,24 @@ export default function App() {
 
   useEffect(() => { fetchLB(); }, [fetchLB]);
 
-  // ── pick helpers ─────────────────────────────────────────────────────────────
+  // ── Pick helpers ──────────────────────────────────────────────────────────
   function togglePick5(name, betId, player) {
-    setPicks(prev => {
-      const cur = prev[name]?.[betId] || [];
-      const next = cur.includes(player) ? cur.filter(p => p !== player) : cur.length < 5 ? [...cur, player] : cur;
-      return { ...prev, [name]: { ...prev[name], [betId]: next } };
-    });
+    const cur = picks[name]?.[betId] || [];
+    const next = cur.includes(player) ? cur.filter(p => p !== player) : cur.length < 5 ? [...cur, player] : cur;
+    updateState({ picks: { ...picks, [name]: { ...picks[name], [betId]: next } } });
   }
   function setSinglePick(name, betId, val) {
-    setPicks(prev => ({ ...prev, [name]: { ...prev[name], [betId]: val } }));
+    updateState({ picks: { ...picks, [name]: { ...picks[name], [betId]: val } } });
   }
-
-  // ── result helpers ────────────────────────────────────────────────────────────
   function markWinner(betId, winner) {
-    setResults(prev => ({ ...prev, [betId]: { ...(prev[betId] || {}), winner } }));
+    updateState({ results: { ...results, [betId]: { ...(results[betId] || {}), winner } } });
   }
   function setRoundResult(betId, player, pos) {
-    setResults(prev => {
-      const rr = { ...(prev[betId]?.roundResults || {}), [player]: pos === "" ? undefined : parseInt(pos) };
-      return { ...prev, [betId]: { ...(prev[betId] || {}), roundResults: rr } };
-    });
+    const rr = { ...(results[betId]?.roundResults || {}), [player]: pos === "" ? undefined : parseInt(pos) };
+    updateState({ results: { ...results, [betId]: { ...(results[betId] || {}), roundResults: rr } } });
   }
 
-  // ── trophies ─────────────────────────────────────────────────────────────────
+  // ── Trophies ──────────────────────────────────────────────────────────────
   function getTrophies() {
     const t = { [names[0]]: [], [names[1]]: [], draw: [] };
     DAYS.forEach(d => d.bets.forEach(b => {
@@ -170,10 +199,8 @@ export default function App() {
     return t;
   }
   const trophies = getTrophies();
-
   const field = (leaderboard && leaderboard.length > 0) ? leaderboard.map(p => p.name) : FULL_FIELD;
 
-  // ── render ────────────────────────────────────────────────────────────────────
   const btnBase = { border: "none", cursor: "pointer", fontFamily: "Georgia, serif" };
   const card = { background: "#0d2b0d", border: "1px solid #2d5a2d", borderRadius: 12, padding: 16, marginBottom: 14 };
 
@@ -190,12 +217,13 @@ export default function App() {
             </div>
           ))}
           <button onClick={() => setEditNames(v => !v)} style={{ ...btnBase, background: "transparent", border: "1px solid #555", borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#aaa" }}>✏️</button>
+          {syncing && <span style={{ fontSize: 11, color: "#8aaa8a", alignSelf: "center" }}>⏳ saving...</span>}
         </div>
         {editNames && (
           <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 10 }}>
             {[0, 1].map(i => (
               <input key={i} value={names[i]}
-                onChange={e => setNames(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
+                onChange={e => { const n = [...names]; n[i] = e.target.value; updateState({ names: n }); }}
                 style={{ background: "#0d2b0d", border: "1px solid #c8a951", borderRadius: 8, padding: "4px 10px", color: "#f5f0e8", fontSize: 13, width: 100, textAlign: "center" }} />
             ))}
           </div>
@@ -239,19 +267,14 @@ export default function App() {
 
                 {/* ── PICK 5 ── */}
                 {bet.type === "pick5" && (<>
-                  {/* Scoring legend */}
                   <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
                     {[["🥇 1st","5pts"],["🥈 2nd","3pts"],["🥉 3rd","2pts"],["Top 10","1pt"],["Outside","0pts"]].map(([l,v]) => (
                       <div key={l} style={{ background: "#122b12", borderRadius: 6, padding: "3px 8px", fontSize: 10, color: "#a8c8a8" }}>{l} = <span style={{ color: "#c8a951" }}>{v}</span></div>
                     ))}
                   </div>
-
-                  {/* Player search */}
                   <input placeholder="🔍 Search players..." value={search}
                     onChange={e => setPlayerSearch(prev => ({ ...prev, [bet.id]: e.target.value }))}
                     style={{ width: "100%", background: "#122b12", border: "1px solid #2d5a2d", borderRadius: 8, padding: "6px 10px", color: "#f5f0e8", fontSize: 12, marginBottom: 10, boxSizing: "border-box" }} />
-
-                  {/* Each player's 5 picks */}
                   {names.map((name, ni) => {
                     const chosen = picks[name]?.[bet.id] || [];
                     const pts = scorePick5(chosen, roundResults);
@@ -262,7 +285,6 @@ export default function App() {
                           — {chosen.length}/5 picked
                           {pts !== null && <span style={{ color: "#c8a951", marginLeft: 8 }}>● {pts} pts</span>}
                         </div>
-                        {/* Chosen pills */}
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
                           {chosen.map(p => {
                             const pos = roundResults[p];
@@ -276,7 +298,6 @@ export default function App() {
                             );
                           })}
                         </div>
-                        {/* Player list */}
                         {!locked && (
                           <div style={{ maxHeight: 140, overflowY: "auto", background: "#122b12", borderRadius: 8, padding: "6px 8px" }}>
                             {field.filter(p => p.toLowerCase().includes(search.toLowerCase()) && !chosen.includes(p)).map(p => (
@@ -291,8 +312,6 @@ export default function App() {
                       </div>
                     );
                   })}
-
-                  {/* Admin: set round positions */}
                   <details style={{ marginTop: 8 }}>
                     <summary style={{ fontSize: 11, color: "#666", cursor: "pointer" }}>📝 Enter round positions (admin)</summary>
                     <div style={{ marginTop: 8 }}>
@@ -305,7 +324,6 @@ export default function App() {
                           <span style={{ fontSize: 11, color: "#c8a951" }}>{roundResults[p] ? getPoints(roundResults[p]) + "pt" : ""}</span>
                         </div>
                       ))}
-                      {/* Auto-calc winner */}
                       {(() => {
                         const s0 = scorePick5(picks[names[0]]?.[bet.id] || [], roundResults);
                         const s1 = scorePick5(picks[names[1]]?.[bet.id] || [], roundResults);
@@ -328,9 +346,9 @@ export default function App() {
                   </details>
                 </>)}
 
-                {/* ── GUESS SCORE (closest without going over) ── */}
+                {/* ── GUESS SCORE ── */}
                 {bet.type === "guess_score" && (<>
-                  <div style={{ fontSize: 11, color: "#8aaa8a", marginBottom: 10 }}>Enter your guess as strokes under par (e.g. 7 = -7). Closest without going over wins.</div>
+                  <div style={{ fontSize: 11, color: "#8aaa8a", marginBottom: 10 }}>Enter strokes under par (e.g. 7 = -7). Closest without going over wins.</div>
                   {names.map((name, ni) => (
                     <div key={ni} style={{ marginBottom: 12 }}>
                       <div style={{ fontSize: 11, color: "#8aaa8a", marginBottom: 5 }}>{ni === 0 ? "🏌️" : "🏌️‍♀️"} {name}:</div>
@@ -345,14 +363,13 @@ export default function App() {
                       </div>
                     </div>
                   ))}
-                  {/* Admin: enter actual score */}
                   <div style={{ borderTop: "1px solid #2d5a2d", marginTop: 8, paddingTop: 10 }}>
-                    <div style={{ fontSize: 11, color: "#666", marginBottom: 6 }}>📝 Enter actual leader score (admin):</div>
+                    <div style={{ fontSize: 11, color: "#666", marginBottom: 6 }}>📝 Actual leader score (admin):</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                       <span style={{ color: "#c8a951" }}>-</span>
                       <input type="number" min="1" max="30"
                         value={results[bet.id]?.actualScore || ""}
-                        onChange={e => setResults(prev => ({ ...prev, [bet.id]: { ...(prev[bet.id] || {}), actualScore: parseInt(e.target.value) || "" } }))}
+                        onChange={e => updateState({ results: { ...results, [bet.id]: { ...(results[bet.id] || {}), actualScore: parseInt(e.target.value) || "" } } })}
                         style={{ width: 70, background: "#122b12", border: "1px solid #2d5a2d", borderRadius: 8, padding: "5px 8px", color: "#f5f0e8", fontSize: 13, textAlign: "center" }} />
                       <span style={{ color: "#8aaa8a", fontSize: 12 }}>under par</span>
                     </div>
@@ -380,12 +397,7 @@ export default function App() {
                             const d = i === 0 ? diff0 : diff1;
                             return <div key={n} style={{ color: "#a8c8a8", marginBottom: 3 }}>{n}: guessed -{g || "?"} → {v ? `off by ${d}` : <span style={{ color: "#cc6666" }}>over ✗</span>}</div>;
                           })}
-                          {auto && (
-                            <button onClick={() => markWinner(bet.id, auto)}
-                              style={{ ...btnBase, marginTop: 6, width: "100%", background: "#1e5c1e", border: "1px solid #c8a951", borderRadius: 8, padding: "6px", color: "#c8a951", fontSize: 12 }}>
-                              ✅ Set winner: {auto === "draw" ? "🤝 Draw" : auto}
-                            </button>
-                          )}
+                          {auto && <button onClick={() => markWinner(bet.id, auto)} style={{ ...btnBase, marginTop: 6, width: "100%", background: "#1e5c1e", border: "1px solid #c8a951", borderRadius: 8, padding: "6px", color: "#c8a951", fontSize: 12 }}>✅ Set winner: {auto === "draw" ? "🤝 Draw" : auto}</button>}
                           {!auto && <div style={{ color: "#cc6666", marginTop: 4 }}>Both guessed over — no winner!</div>}
                         </div>
                       );
@@ -417,11 +429,10 @@ export default function App() {
                       )}
                     </div>
                   ))}
-                  {/* Mark winner */}
                   <div style={{ borderTop: "1px solid #2d5a2d", marginTop: 8, paddingTop: 10 }}>
                     <div style={{ fontSize: 11, color: "#666", marginBottom: 6 }}>📝 Mark result:</div>
                     <div style={{ display: "flex", gap: 6 }}>
-                      {[...names, "draw"].map((n, i) => (
+                      {[...names, "draw"].map(n => (
                         <button key={n} onClick={() => markWinner(bet.id, winner === n ? null : n)}
                           style={{ ...btnBase, flex: 1, padding: "6px 4px", borderRadius: 8, border: winner === n ? "2px solid #c8a951" : "1px solid #2d5a2d", background: winner === n ? "#1e5c1e" : "#1a3a1a", color: winner === n ? "#c8a951" : "#8aaa8a", fontSize: 11 }}>
                           {winner === n ? "✅" : "○"} {n === "draw" ? "🤝 Draw" : n}
@@ -431,7 +442,6 @@ export default function App() {
                   </div>
                 </>)}
 
-                {/* Result banner */}
                 {winner && (
                   <div style={{ marginTop: 12, background: "#1e5c1e", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#c8a951", textAlign: "center" }}>
                     {winner === "draw" ? "🤝 Draw — both claim the prize!" : `🏆 ${winner} wins — ${bet.prize}`}
